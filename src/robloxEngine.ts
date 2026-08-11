@@ -83,6 +83,37 @@ function isBlockedAddress(address: string): boolean {
 }
 
 /**
+ * GitHub's /blob/ URL is a web page, not the file bytes. Convert the common
+ * GitHub file-page form into the corresponding raw.githubusercontent.com URL
+ * before validation and fetching.
+ */
+function normalizeRawSourceUrl(rawUrl: string): string {
+  let input: URL;
+  try {
+    input = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+
+  const hostname = input.hostname.toLowerCase();
+  const parts = input.pathname.split("/").filter(Boolean);
+  if (
+    (hostname === "github.com" || hostname === "www.github.com") &&
+    parts.length >= 5 &&
+    parts[2] === "blob"
+  ) {
+    const [owner, repository, , revision, ...filePath] = parts;
+    const output = new URL(
+      `https://raw.githubusercontent.com/${owner}/${repository}/${revision}/${filePath.join("/")}`,
+    );
+    output.search = input.search;
+    return output.toString();
+  }
+
+  return rawUrl;
+}
+
+/**
  * Validate a remote source before fetching it. Raw URLs are user supplied, so
  * this blocks localhost, cloud metadata endpoints, private network targets,
  * non-HTTPS URLs, and non-standard ports to reduce SSRF risk.
@@ -243,7 +274,7 @@ export async function fetchRawAssetBuffer(rawUrl: string): Promise<{
   buffer: Buffer;
   modelName: string;
 }> {
-  let url = await validateRawUrl(rawUrl);
+  let url = await validateRawUrl(normalizeRawSourceUrl(rawUrl));
 
   for (let redirectCount = 0; redirectCount <= MAX_RAW_REDIRECTS; redirectCount += 1) {
     let response: Response;
