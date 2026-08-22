@@ -158,7 +158,7 @@ const AssetSearchItem = zod.object({
   upVotes: zod.number(),
   downVotes: zod.number(),
   hasScripts: zod.boolean(),
-  thumbnail: zod.null(),
+  thumbnail: zod.string().url().nullable(),
 });
 
 export const AssetSearchResponse = zod.object({
