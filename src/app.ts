@@ -18,9 +18,25 @@ import { searchAssets, AssetSearchError } from "./assetSearch.js";
 
 const app: Express = express();
 
-app.use(cors());
+// Roblox Studio's HttpService and Godot's HTTPClient do not send browser
+// credentials or browser-style preflight requests. Keep the API public at the
+// transport layer and let the route validation decide what is accepted.
+app.use(cors({
+  origin: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Accept", "Authorization", "X-Client"],
+  optionsSuccessStatus: 204,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Godot-friendly response headers. These are also useful when the endpoint is
+// tested from a browser-based Godot tool.
+app.use((_req: Request, res: Response, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Toolbox-API-Version", "godot-1");
+  next();
+});
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get("/api/healthz", (_req: Request, res: Response) => {
@@ -33,9 +49,23 @@ app.get("/api/healthz", (_req: Request, res: Response) => {
  * Body: { assetId: "12345678" } or { rawUrl: "https://.../model.rbxm" }
  */
 async function loadAsset(req: Request, res: Response): Promise<void> {
-  const parsed = EngineLoadBody.safeParse(req.body);
+  // GET is intentionally supported for Godot prototypes and simple
+  // HTTPClient calls. POST remains the recommended method for Roblox and for
+  // production Godot clients because rawUrl can be long.
+  const input = req.method === "GET"
+    ? {
+        assetId: typeof req.query.assetId === "string" ? req.query.assetId : undefined,
+        rawUrl: typeof req.query.rawUrl === "string" ? req.query.rawUrl : undefined,
+        modelName: typeof req.query.modelName === "string" ? req.query.modelName : undefined,
+      }
+    : (req.body ?? {});
+  const parsed = EngineLoadBody.safeParse(input);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    res.status(400).json({
+      ok: false,
+      error: "Invalid request.",
+      details: parsed.error.issues.map((issue) => issue.message),
+    });
     return;
   }
 
@@ -61,14 +91,15 @@ async function loadAsset(req: Request, res: Response): Promise<void> {
   } catch (err) {
     if (err instanceof EngineFetchError) {
       console.warn(`[Engine] Load failed for ${assetId}: ${err.message}`);
-      res.status(502).json({ error: err.message });
+      res.status(502).json({ ok: false, error: err.message });
       return;
     }
     console.error(`[Engine] Unexpected error for ${assetId}:`, err);
-    res.status(502).json({ error: "Unexpected error loading asset." });
+    res.status(502).json({ ok: false, error: "Unexpected error loading asset." });
   }
 }
 
+app.get("/api/engine/load", loadAsset);
 app.post("/api/engine/load", loadAsset);
 
 // Explicit alias for clients that prefer a self-documenting raw-file route.
@@ -85,6 +116,7 @@ app.post("/api/engine/load-url", async (req: Request, res: Response): Promise<vo
   req.body = parsed.data;
   await loadAsset(req, res);
 });
+app.get("/api/engine/load-url", loadAsset);
 
 // ── Engine: search assets ─────────────────────────────────────────────────
 /**
