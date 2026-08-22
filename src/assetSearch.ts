@@ -10,6 +10,7 @@
 
 const TOOLBOX_SEARCH_BASE = "https://apis.roblox.com/toolbox-service/v1/marketplace";
 const TOOLBOX_DETAILS_URL = "https://apis.roblox.com/toolbox-service/v1/items/details";
+const THUMBNAILS_URL = "https://thumbnails.roblox.com/v1/assets";
 
 export const VALID_SORTS = [
   "Relevance",
@@ -59,7 +60,7 @@ export interface AssetSearchItem {
   upVotes: number;
   downVotes: number;
   hasScripts: boolean;
-  thumbnail: null;
+  thumbnail: string | null;
 }
 
 export interface AssetSearchResult {
@@ -101,6 +102,12 @@ interface ToolboxDetailItem {
     upVotes?: number;
     downVotes?: number;
   };
+}
+
+interface RobloxThumbnailItem {
+  targetId: number;
+  state: string;
+  imageUrl?: string;
 }
 
 export async function searchAssets(
@@ -180,6 +187,34 @@ export async function searchAssets(
     detailMap.set(item.asset.id, item);
   }
 
+  // Resolve real HTTPS image URLs. Godot cannot render Roblox's rbxthumb://
+  // pseudo-URLs directly, so the API returns the CDN URL instead.
+  const thumbnailMap = new Map<number, string>();
+  try {
+    const thumbnailParams = new URLSearchParams({
+      assetIds: searchItems.map((item) => String(item.id)).join(","),
+      returnPolicy: "PlaceHolder",
+      size: "150x150",
+      format: "Png",
+      isCircular: "false",
+    });
+    const thumbnailRes = await fetch(`${THUMBNAILS_URL}?${thumbnailParams}`, {
+      headers: HEADERS,
+    });
+    if (thumbnailRes.ok) {
+      const thumbnailData = (await thumbnailRes.json()) as {
+        data?: RobloxThumbnailItem[];
+      };
+      for (const item of thumbnailData.data ?? []) {
+        if (item.imageUrl && item.state === "Completed") {
+          thumbnailMap.set(item.targetId, item.imageUrl);
+        }
+      }
+    }
+  } catch {
+    // Search results remain usable if Roblox's thumbnail service is delayed.
+  }
+
   const assets: AssetSearchItem[] = searchItems.map((si) => {
     const d = detailMap.get(si.id);
     if (!d) {
@@ -188,7 +223,8 @@ export async function searchAssets(
         name: "Unknown",
         description: "",
         creator: { name: "Unknown", type: "User" as const, id: 0, isVerified: false },
-        upVotes: 0, downVotes: 0, hasScripts: false, thumbnail: null,
+        upVotes: 0, downVotes: 0, hasScripts: false,
+        thumbnail: thumbnailMap.get(si.id) ?? null,
       };
     }
     return {
@@ -204,7 +240,7 @@ export async function searchAssets(
       upVotes: d.voting?.upVotes ?? 0,
       downVotes: d.voting?.downVotes ?? 0,
       hasScripts: d.asset.hasScripts ?? false,
-      thumbnail: null,
+      thumbnail: thumbnailMap.get(si.id) ?? null,
     };
   });
 
