@@ -147,13 +147,10 @@ func _on_asset_loaded(response_data: Dictionary) -> void:
 		# Tempatkan model di depan Camera3D aktif.
 		var camera := _find_camera(current_scene)
 		if camera:
-			root_container.global_position = (
-				camera.global_position
-				- camera.global_transform.basis.z * 6.0
-			)
+			_fit_model_to_camera(root_container, camera)
 		else:
 			camera = _create_preview_camera(current_scene)
-			root_container.global_position = Vector3.ZERO
+			_fit_model_to_camera(root_container, camera)
 
 		_ensure_preview_light(current_scene)
 		print("Model 3D berhasil di-spawn di dunia!")
@@ -194,6 +191,59 @@ func _ensure_preview_light(parent_node: Node) -> void:
 	light.rotation_degrees = Vector3(-45, -30, 0)
 	light.light_energy = 1.5
 	parent_node.add_child(light)
+
+
+func _fit_model_to_camera(model_root: Node3D, camera: Camera3D) -> void:
+	# Hitung bounding box semua MeshInstance3D di dalam model.
+	var bounds := AABB()
+	var has_mesh := false
+	var mesh_nodes := model_root.find_children(
+		"*",
+		"MeshInstance3D",
+		true,
+		false
+	)
+
+	for node in mesh_nodes:
+		var mesh_node := node as MeshInstance3D
+		if mesh_node == null or mesh_node.mesh == null:
+			continue
+
+		var relative_transform := (
+			model_root.global_transform.affine_inverse()
+			* mesh_node.global_transform
+		)
+		var mesh_bounds := mesh_node.get_aabb().transformed(relative_transform)
+
+		if not has_mesh:
+			bounds = mesh_bounds
+			has_mesh = true
+		else:
+			bounds = bounds.merge(mesh_bounds)
+
+	if not has_mesh or bounds.size.length() <= 0.001:
+		model_root.global_position = (
+			camera.global_position
+			- camera.global_transform.basis.z * 6.0
+		)
+		return
+
+	# Normalisasi ukuran agar model kecil maupun besar tetap terlihat.
+	var largest_dimension := max(
+		bounds.size.x,
+		max(bounds.size.y, bounds.size.z)
+	)
+	var scale_factor := clampf(4.0 / largest_dimension, 0.05, 20.0)
+	model_root.scale = Vector3.ONE * scale_factor
+
+	var model_center := bounds.position + bounds.size * 0.5
+	var view_center := (
+		camera.global_position
+		- camera.global_transform.basis.z * 6.0
+	)
+
+	# Geser root berdasarkan titik tengah model setelah scaling.
+	model_root.global_position = view_center - model_center * scale_factor
 
 
 # ─── 4. LOGIKA RECONSTRUCTOR JSON ROBLOX KE NODE3D ───────────────────────────
