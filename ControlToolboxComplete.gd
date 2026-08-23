@@ -144,10 +144,56 @@ func _on_asset_loaded(response_data: Dictionary) -> void:
 		# Mulai bangun hierarki 3D.
 		_reconstruct_tree(model_data, root_container)
 
-		# Posisikan model tepat di depan kamera.
-		root_container.position = Vector3(0, 1, -5)
+		# Tempatkan model di depan Camera3D aktif.
+		var camera := _find_camera(current_scene)
+		if camera:
+			root_container.global_position = (
+				camera.global_position
+				- camera.global_transform.basis.z * 6.0
+			)
+		else:
+			camera = _create_preview_camera(current_scene)
+			root_container.global_position = Vector3.ZERO
+
+		_ensure_preview_light(current_scene)
 		print("Model 3D berhasil di-spawn di dunia!")
 		status_asset.text = "Model berhasil di-spawn ke dunia 3D."
+	else:
+		status_asset.text = "Response berhasil, tetapi data model kosong."
+
+
+func _find_camera(parent_node: Node) -> Camera3D:
+	var camera := parent_node.find_child("Camera3D", true, false) as Camera3D
+	if camera:
+		return camera
+
+	for child in parent_node.get_children():
+		if child is Camera3D:
+			return child as Camera3D
+
+	return null
+
+
+func _create_preview_camera(parent_node: Node) -> Camera3D:
+	var camera := Camera3D.new()
+	camera.name = "ToolboxPreviewCamera"
+	camera.position = Vector3(0, 2, 8)
+	parent_node.add_child(camera)
+	camera.look_at(Vector3(0, 1, 0), Vector3.UP)
+	camera.current = true
+	return camera
+
+
+func _ensure_preview_light(parent_node: Node) -> void:
+	var existing_light := parent_node.find_child("DirectionalLight3D", true, false)
+	if existing_light:
+		return
+
+	var light := DirectionalLight3D.new()
+	light.name = "ToolboxPreviewLight"
+	light.rotation_degrees = Vector3(-45, -30, 0)
+	light.light_energy = 1.5
+	parent_node.add_child(light)
 
 
 # ─── 4. LOGIKA RECONSTRUCTOR JSON ROBLOX KE NODE3D ───────────────────────────
